@@ -5,35 +5,35 @@
 #include <sys/ptrace.h>
 #include <sys/wait.h>
 
-void run_target(const char* programname);
-void run_debugger(pid_t child_pid);
-void procmsg(const char* format, ...);
+void run_program(const char* programname);
+void count_instructions_in(pid_t child_pid);
+void printWithPid(const char* format, ...);
 
 int main(int argc, char** argv)
 {
-    pid_t child_pid;
     if (argc < 2) {
         fprintf(stderr, "Expected a program name as argument\n");
         return -1;
     }
     char * programName = argv[1];
 
-    child_pid = fork();
+    // Start process to debug in new thread
+    pid_t child_pid = fork();
     if (child_pid == 0)
-        run_target(programName);
+        run_program(programName);
     else if (child_pid > 0)
-        run_debugger(child_pid);
+        count_instructions_in(child_pid);
     else {
-        perror("fork");
+        perror("Fork failed");
         return -1;
     }
 
     return 0;
 }
 
-void run_target(const char* programname)
+void run_program(const char* programname)
 {
-    procmsg("target started. will run '%s'\n", programname);
+    printWithPid("target started. will run '%s'\n", programname);
 
     /* Allow tracing of this process */
     if (ptrace(PTRACE_TRACEME, 0, 0, 0) < 0) {
@@ -41,19 +41,19 @@ void run_target(const char* programname)
         return;
     }
 
-    /* Replace this process's image with the given program */
-    execl(programname, programname, 0, NULL);
+    /* Execute program */
+    execl(programname, programname, NULL);
 }
 
-void run_debugger(pid_t child_pid)
+void count_instructions_in(pid_t child_pid)
 {
-    int wait_status;
-    unsigned icounter = 0;
-    procmsg("debugger started\n");
+    printWithPid("debugger started\n");
 
     /* Wait for child to stop on its first instruction */
+    int wait_status;
     wait(&wait_status);
 
+    unsigned icounter = 0;
     while (WIFSTOPPED(wait_status)) {
         icounter++;
         /* Make the child execute another instruction */
@@ -66,11 +66,13 @@ void run_debugger(pid_t child_pid)
         wait(&wait_status);
     }
 
-    procmsg("the child executed %u instructions\n", icounter);
+    printWithPid("the child executed %u instructions\n", icounter);
 }
 
-void procmsg(const char* format, ...)
+void printWithPid(const char* format, ...)
 {
+    // va_list is used to access the variable number of arguments.
+    // This is denoted by the ellipsis '...'
     va_list ap;
     fprintf(stdout, "[%d] ", getpid());
     va_start(ap, format);
