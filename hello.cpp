@@ -2,5 +2,6 @@
 
 int main(int argc, char** argv)
 {
-    fprintf(stdout, "Hello world!\n");
+    int a = 1;
+    fprintf(stdout, "Hello world! My number is: %d\n", a);
 }
