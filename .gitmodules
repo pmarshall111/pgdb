@@ -1,0 +1,3 @@
+[submodule "include/libelfin"]
+	path = include/libelfin
+	url = git@github.com:aclements/libelfin.git

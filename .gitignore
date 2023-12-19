@@ -2,3 +2,5 @@
 build/
 tmp/
 TODO.txt
+.swp
+*.tsk

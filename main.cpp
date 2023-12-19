@@ -13,12 +13,17 @@
 #include <sys/ptrace.h>
 #include <sys/wait.h>
 
+#include <elf/elf++.hh>
+#include <dwarf/dwarf++.hh>
+#include <fcntl.h>
+
+#include <fstream>
+
 // https://github.com/TartanLlama/minidbg/blob/tut_break/include/breakpoint.hpp
 // ^ This seems to be a great tutorial on how to do it.
 
 void run_program(const char* programname);
 void count_instructions_in(pid_t child_pid);
-void printWithPid(const char* format, ...);
 
 int main(int argc, char** argv)
 {
@@ -27,6 +32,19 @@ int main(int argc, char** argv)
     //     return -1;
     // }
     char * programName = "build/hello.tsk";
+
+    int fd = open(programName, O_RDONLY);
+    auto elfMaps = elf::elf{elf::create_mmap_loader(fd)};
+    auto dwarfMaps = dwarf::dwarf{dwarf::elf::create_loader(elfMaps)};
+    for (auto &cu : dwarfMaps.compilation_units()) {
+        for (const auto& die : cu.root()) {
+            if (die.tag == dwarf::DW_TAG::subprogram && die.has(dwarf::DW_AT::name)) {
+                fprintf(stdout, "Found a function called: %s\n", die[dwarf::DW_AT::name].as_string().c_str());
+            }
+        }
+    }
+
+
 
     // Start process to debug in new thread
     pid_t child_pid = fork();
@@ -44,7 +62,7 @@ int main(int argc, char** argv)
 
 void run_program(const char* programname)
 {
-    printWithPid("target started. will run '%s'\n", programname);
+    fprintf(stdout, "target started. will run '%s'\n", programname);
 
     /* Allow tracing of this process */
     if (ptrace(PTRACE_TRACEME, 0, 0, 0) < 0) {
@@ -62,10 +80,10 @@ void count_instructions_in(pid_t child_pid)
     int wait_status;
     pid_t rc = waitpid(child_pid, &wait_status, 0);
     if (rc != child_pid) {
-        printWithPid("error: %d\n", rc);
+        fprintf(stdout, "error: %d\n", rc);
     }
-    printWithPid("Beign waitstatus: %d\n", wait_status);
-    printWithPid("debugger started. Child pid: %i\n", child_pid);
+    fprintf(stdout, "Beign waitstatus: %d\n", wait_status);
+    fprintf(stdout, "debugger started. Child pid: %i\n", child_pid);
 
     // Get memory assigned to process. This can change on every execution.
     ProcMemMap pmm;
@@ -80,10 +98,10 @@ void count_instructions_in(pid_t child_pid)
 
     // Set breakpoint just after we print the random number. 0x13d1 corresponds to line 18 in hello.cpp
     // I've changed this to 0x03d1 because the address should begin from the start of the mem segment.
-    size_t stop_addr = stol(codeMemory.addressStart(),0,16) + stol(std::string("00000000000003d1"), 0, 16);
+    size_t stop_addr = stol(codeMemory.addressStart(),0,16) + stol(std::string("00000000000004c4"), 0, 16);
     std::stringstream stopAddrHex;
     stopAddrHex << std::hex << stop_addr << std::endl;
-    printWithPid("Address start in hex: %s. Breakpoint in hex: %s\n", codeMemory.addressStart().c_str(), stopAddrHex.str().c_str());
+    fprintf(stdout, "Address start in hex: %s. Breakpoint in hex: %s\n", codeMemory.addressStart().c_str(), stopAddrHex.str().c_str());
     uint64_t dataToRestore = ptrace(PTRACE_PEEKDATA, child_pid, stop_addr);
     uint8_t int3 = 0xCC;
     // Change the last byte of the register to be the int 3 instruction. This will cause the program to stop
@@ -100,14 +118,15 @@ void count_instructions_in(pid_t child_pid)
     /* Wait for child to stop */
     pid_t out = waitpid(child_pid, &wait_status, 0);
     if (out != child_pid) {
-        printWithPid("error: %d\n", out);
+        fprintf(stdout, "error: %d\n", out);
     }
-    printWithPid("waitstatus: %d\n", wait_status);
+    fprintf(stdout, "waitstatus: %d\n", wait_status);
 
     unsigned icounter = 0;
     while (WIFSTOPPED(wait_status)) { // wait_status is normally 1407, in hex: 0x57F
         icounter++;
-        printWithPid("Stopped\n");
+        fprintf(stdout, "Stopped\n");
+        sleep(1);
 
         // Get the address of the next instruction. This will be the instruction after
         // int3 since RIP register is incremented after the CPU runs any instruction.
@@ -115,12 +134,12 @@ void count_instructions_in(pid_t child_pid)
         
         std::stringstream hexAddr;
         hexAddr << std::hex << addr << std::endl;
-        printWithPid("The hex addr: %s\n", hexAddr.str().c_str());
+        fprintf(stdout, "The hex addr: %s\n", hexAddr.str().c_str());
 
         // Replace the data at the stop address with what it should have been
         uint64_t currData = ptrace(PTRACE_PEEKDATA, child_pid, stop_addr);
-        printWithPid("The data: %ld\n", currData);
-        printWithPid("The data to restore: %ld\n", dataToRestore);
+        fprintf(stdout, "The data: %ld\n", currData);
+        fprintf(stdout, "The data to restore: %ld\n", dataToRestore);
         if (ptrace(PTRACE_POKEDATA, child_pid, stop_addr, (currData & ~0xFF)|dataToRestore) < 0) {
             perror("replace original data");
         };
@@ -137,7 +156,7 @@ void count_instructions_in(pid_t child_pid)
         // print address after singlestep        
         std::stringstream hexAddr2;
         hexAddr2 << std::hex << ptrace(PTRACE_PEEKUSER, child_pid, 8 * REG_RIP, NULL) << std::endl;
-        printWithPid("After singlestep, the hex addr: %s\n", hexAddr2.str().c_str());
+        fprintf(stdout, "After singlestep, the hex addr: %s\n", hexAddr2.str().c_str());
 
         // Set the breakpoint again
         if (ptrace(PTRACE_POKEDATA, child_pid, stop_addr, (dataToRestore & ~0xFF) | int3) < 0) {
@@ -151,19 +170,7 @@ void count_instructions_in(pid_t child_pid)
         wait(&wait_status);
     }
 
-    printWithPid("the child executed %u instructions\n", icounter);
-}
-
-void printWithPid(const char* format, ...)
-{
-    // va_list is used to access the variable number of arguments.
-    // This is denoted by the ellipsis '...'
-    va_list ap;
-    fprintf(stdout, "[%d] ", getpid());
-    va_start(ap, format);
-    vfprintf(stdout, format, ap);
-    va_end(ap);
-    fflush(stdout);
+    fprintf(stdout, "the child executed %u instructions\n", icounter);
 }
 
 
