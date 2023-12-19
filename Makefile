@@ -7,7 +7,7 @@ build:
 	cd build && cmake .. && cmake --build .
 
 debug:
-	build/pgdb build/hello.tsk
+	build/pgdb build/hello.tsk my_func
 
 clean:
 	rm -rf build

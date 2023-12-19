@@ -19,39 +19,72 @@
 
 #include <fstream>
 
+#include <iostream>
+
 // https://github.com/TartanLlama/minidbg/blob/tut_break/include/breakpoint.hpp
 // ^ This seems to be a great tutorial on how to do it.
 
 void run_program(const char* programname);
-void count_instructions_in(pid_t child_pid);
+void debugChild(pid_t child_pid, const std::string& memStartHex, uint64_t break_address);
+
+AssignedMemory getStartMemoryAddress(const std::string& filePath, pid_t pid) {
+    // Due to Adress Space Layout Randomisation, the start address will be different for every run.
+    ProcMemMap pmm;
+    pmm.init(pid);
+    std::vector<AssignedMemory> mem = pmm.getMapsForFilePath(filePath);
+    // Should instead seach for the offset 0 of the maps.
+    auto memContainingCode = std::find_if(mem.begin(), mem.end(), [](AssignedMemory am) {return am.offset() == "00000000";});
+    if (memContainingCode == mem.end()) {
+        throw new std::runtime_error("Could not find memory map for executable code");
+    }
+    return *memContainingCode;
+}
+
+#include <inttypes.h>
 
 int main(int argc, char** argv)
 {
-    // if (argc < 2) {
-    //     fprintf(stderr, "Expected a program name as argument\n");
-    //     return -1;
-    // }
-    char * programName = "build/hello.tsk";
+    if (argc < 3) {
+        fprintf(stderr, "Usage: pgdb <program> <func_to_set_breakpoint_on>\n");
+        return -1;
+    }
+    char * programName = argv[1];
+    char * funcName = argv[2];
 
     int fd = open(programName, O_RDONLY);
     auto elfMaps = elf::elf{elf::create_mmap_loader(fd)};
     auto dwarfMaps = dwarf::dwarf{dwarf::elf::create_loader(elfMaps)};
+    uint64_t funcAddr;
+    bool foundFunc = false;
     for (auto &cu : dwarfMaps.compilation_units()) {
         for (const auto& die : cu.root()) {
-            if (die.tag == dwarf::DW_TAG::subprogram && die.has(dwarf::DW_AT::name)) {
+            if (die.tag == dwarf::DW_TAG::subprogram && die.has(dwarf::DW_AT::name) && die.has(dwarf::DW_AT::low_pc)) {
                 fprintf(stdout, "Found a function called: %s\n", die[dwarf::DW_AT::name].as_string().c_str());
+                fprintf(stdout, "Func addr: %d\n", die[dwarf::DW_AT::low_pc].as_address());
+                if (0 == strcmp(funcName, die[dwarf::DW_AT::name].as_string().c_str())) {
+                    funcAddr = die[dwarf::DW_AT::low_pc].as_address();
+                    foundFunc = true;
+                }
             }
         }
     }
 
-
+    if (!foundFunc) {
+        fprintf(stderr, "Could not find function '%s'. Please break on an existing function.\n", funcName);
+        return -1;
+    }
 
     // Start process to debug in new thread
     pid_t child_pid = fork();
-    if (child_pid == 0)
+    if (child_pid == 0) {
         run_program(programName);
-    else if (child_pid > 0)
-        count_instructions_in(child_pid);
+    }
+    else if (child_pid > 0) {
+        fprintf(stdout, "debugger started. Child pid: %i\n", child_pid);
+        waitpid(child_pid, NULL, 0); // Wait for child to stop on first instruction
+        AssignedMemory codeMemory = getStartMemoryAddress("/home/peter/Documents/personalProjects/debugger/build/hello.tsk", child_pid);
+        debugChild(child_pid, codeMemory.addressStart(), funcAddr);
+    }
     else {
         perror("Fork failed");
         return -1;
@@ -74,103 +107,62 @@ void run_program(const char* programname)
     execl(programname, programname, NULL);
 }
 
-void count_instructions_in(pid_t child_pid)
+void printInHex(const std::string& prefix, size_t addr) {
+    std::stringstream addrHex;
+    addrHex << std::hex << addr;
+    fprintf(stdout, "%s: %s.\n", prefix.c_str(), addrHex.str().c_str());
+}
+
+void debugChild(pid_t child_pid, const std::string& memStartHex, uint64_t breakAddress)
 {
-    /* Wait for child to stop on first instruction */
-    int wait_status;
-    pid_t rc = waitpid(child_pid, &wait_status, 0);
-    if (rc != child_pid) {
-        fprintf(stdout, "error: %d\n", rc);
-    }
-    fprintf(stdout, "Beign waitstatus: %d\n", wait_status);
-    fprintf(stdout, "debugger started. Child pid: %i\n", child_pid);
-
-    // Get memory assigned to process. This can change on every execution.
-    ProcMemMap pmm;
-    pmm.init(child_pid);
-    std::vector<AssignedMemory> mem = pmm.getMapsForFilePath("/home/peter/Documents/personalProjects/debugger/build/hello.tsk");
-    // Should instead seach for the offset 0 of the maps.
-    auto memContainingCode = std::find_if(mem.begin(), mem.end(), [](AssignedMemory am) {return am.isExecutable();});
-    if (memContainingCode == mem.end()) {
-        throw new std::runtime_error("Could not find memory map for executable code");
-    }
-    AssignedMemory codeMemory = *memContainingCode;
-
-    // Set breakpoint just after we print the random number. 0x13d1 corresponds to line 18 in hello.cpp
-    // I've changed this to 0x03d1 because the address should begin from the start of the mem segment.
-    size_t stop_addr = stol(codeMemory.addressStart(),0,16) + stol(std::string("00000000000004c4"), 0, 16);
-    std::stringstream stopAddrHex;
-    stopAddrHex << std::hex << stop_addr << std::endl;
-    fprintf(stdout, "Address start in hex: %s. Breakpoint in hex: %s\n", codeMemory.addressStart().c_str(), stopAddrHex.str().c_str());
-    uint64_t dataToRestore = ptrace(PTRACE_PEEKDATA, child_pid, stop_addr);
+    size_t stop_addr = stol(memStartHex,0,16) + breakAddress;
+    printInHex("Breakpoint address", stop_addr);
     uint8_t int3 = 0xCC;
+    uint64_t dataToRestore = ptrace(PTRACE_PEEKDATA, child_pid, stop_addr);
     // Change the last byte of the register to be the int 3 instruction. This will cause the program to stop
     // on the address.
-    if (ptrace(PTRACE_POKEDATA, child_pid, stop_addr, (dataToRestore & ~0xFF) | int3) < 0) {
-        perror("int3");
-    };
-
+    ptrace(PTRACE_POKEDATA, child_pid, stop_addr, (dataToRestore & ~0xFF) | int3);
     // Tell child to run. It should run until it hits the breakpoint.
-    if (ptrace(PTRACE_CONT, child_pid, 0, 0) < 0) {
-        perror("cont");
-    };
-
+    ptrace(PTRACE_CONT, child_pid, 0, 0);
+    
     /* Wait for child to stop */
-    pid_t out = waitpid(child_pid, &wait_status, 0);
-    if (out != child_pid) {
-        fprintf(stdout, "error: %d\n", out);
-    }
-    fprintf(stdout, "waitstatus: %d\n", wait_status);
+    int wait_status;
+    waitpid(child_pid, &wait_status, 0);
 
-    unsigned icounter = 0;
     while (WIFSTOPPED(wait_status)) { // wait_status is normally 1407, in hex: 0x57F
-        icounter++;
         fprintf(stdout, "Stopped\n");
         sleep(1);
 
-        // Get the address of the next instruction. This will be the instruction after
+        // Get the address of the next instruction. This will be the instruction after the memory address we set to
         // int3 since RIP register is incremented after the CPU runs any instruction.
         uint64_t addr = ptrace(PTRACE_PEEKUSER, child_pid, 8 * REG_RIP, NULL); // PEEKUSER is for getting the register values. PEEKDATA is for reading the program data.
-        
-        std::stringstream hexAddr;
-        hexAddr << std::hex << addr << std::endl;
-        fprintf(stdout, "The hex addr: %s\n", hexAddr.str().c_str());
+        printInHex("Stop address", addr);
 
         // Replace the data at the stop address with what it should have been
         uint64_t currData = ptrace(PTRACE_PEEKDATA, child_pid, stop_addr);
         fprintf(stdout, "The data: %ld\n", currData);
         fprintf(stdout, "The data to restore: %ld\n", dataToRestore);
-        if (ptrace(PTRACE_POKEDATA, child_pid, stop_addr, (currData & ~0xFF)|dataToRestore) < 0) {
-            perror("replace original data");
-        };
+        ptrace(PTRACE_POKEDATA, child_pid, stop_addr, (currData & ~0xFF)|dataToRestore);
 
-        // Move RIP register back 1 step now we've replaced the data
+        // Move RIP register back 1 step now we've replaced the data with what was there before and run it
         ptrace(PTRACE_POKEUSER, child_pid, 8 * REG_RIP, addr-1);
-
-        // Make the child execute the step we replaced with the breakpoint
         ptrace(PTRACE_SINGLESTEP, child_pid, 0, 0);
 
-        /* Wait for child to stop on its next instruction */
+        // Wait for child to stop on its next instruction
         wait(&wait_status);
+        printInHex("Address after singlestep", ptrace(PTRACE_PEEKUSER, child_pid, 8 * REG_RIP, NULL));
 
-        // print address after singlestep        
-        std::stringstream hexAddr2;
-        hexAddr2 << std::hex << ptrace(PTRACE_PEEKUSER, child_pid, 8 * REG_RIP, NULL) << std::endl;
-        fprintf(stdout, "After singlestep, the hex addr: %s\n", hexAddr2.str().c_str());
+        // Set the breakpoint again so the next time the code hits the memory address the breakpoint is preserved.
+        ptrace(PTRACE_POKEDATA, child_pid, stop_addr, (dataToRestore & ~0xFF) | int3);
 
-        // Set the breakpoint again
-        if (ptrace(PTRACE_POKEDATA, child_pid, stop_addr, (dataToRestore & ~0xFF) | int3) < 0) {
-            perror("int3 second time");
-        };
-
-        // Allow the program to continue
+        // Allow the program to continue until it next gets interrupted
         ptrace(PTRACE_CONT, child_pid, 0, 0);
 
         /* Wait for child to stop on its next instruction */
         wait(&wait_status);
     }
 
-    fprintf(stdout, "the child executed %u instructions\n", icounter);
+    fprintf(stdout, "Completed!\n");
 }
 
 
