@@ -21,9 +21,6 @@
 
 #include <iostream>
 
-// https://github.com/TartanLlama/minidbg/blob/tut_break/include/breakpoint.hpp
-// ^ This seems to be a great tutorial on how to do it.
-
 void run_program(const char* programname);
 void debugChild(pid_t child_pid, const std::string& memStartHex, uint64_t break_address);
 
@@ -166,56 +163,3 @@ void debugChild(pid_t child_pid, const std::string& memStartHex, uint64_t breakA
     fprintf(stdout, "Completed!\n");
 }
 
-
-
-/*
- * Current progress is struggling to match the function I want to put a breakpoint on to a
- * point in the code. There's another project that seems to look at the process map, and sets a breakpoint
- * just on that line, but that address doesn't seem to be called in my code.
- * 
- * Maybe it's possible that the program has done its job but just can't exit because all the instructions have a breakpoint added?
- * Not sure this is the case.
- * 
- * https://github.com/linuxkerneltravel/lmp/blob/develop/eBPF_Supermarket/User_Function_Tracer/src/utrace.c#L480
- * 
- * I think I might be getting somewhere.
- * Use the /proc/<pid>/maps file to see how each segment in the executable is mapped to memory addresses.
- * The memory with our code is stored in the version of our file that is executable. So to set a breakpoint for main, we need to load up
- * the map in /proc/ and add the offset from nm to it.
- * 
- * That *should* then work...! Relatively big change. Next step should be to integrate with the /proc/<pid>/maps file to get the memory
- * range.
- * 
- * After that we can do manual tests by hardcoding the offset of the main function since this will not change from run to run.
- * 
-*/
-
-
-/*
-* New progress = we have a class to read the /proc/pid/maps file and we should be able to test whether we can now set the breakpoint
-* Need to figure out when we have to replace the breakpoint command with the original command
-*
-* Also need to figure out how to edit my cmakelists to include the procMemMap file.
-*/
-
-
-
-/*
-* Current thoughts are that the offset from nm is actually from the beginning of the block for the file. So an offset of 1e29 in nm would need to add
-* to the lowest of the the memory segments for the executable. This is correct
-*
-* I think just in terms of more understanding I could be printing the file the address is from.
-* An extension of that could be to somehow convert the address into a symbol. That sounds much harder, but ultimately is probably something I need anyway.
-* It would help me understand what's going on a lot more.
-*
-* I think that the single step is not suitable for me. Because it goes into the underlying libraries. I need to either be able to singlestep until we get
-* back into our application, or find out the address of the next line of code and place a new breakpoint. I think easiest is probably looking at what code
-* the library is in. This is the whole step over/step into thing.
-*
-* Next: Write some code to get the library the address is from.
-*       Figure out how to convert an address to a line in code.
-
-* It would be more efficient to know what line we're currently on and then get the address of the next line and keep stepping over till we hit that address.
-
-https://github.com/cwgreene/line2addr/blob/master/line2addr.py
-*/
