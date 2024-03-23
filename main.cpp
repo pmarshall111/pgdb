@@ -74,7 +74,7 @@ int main(int argc, char** argv)
         return -1;
     }
 
-    // Start process to debug in new thread
+    // Create new process to run the program we'll debug
     pid_t child_pid = fork();
     if (child_pid == 0) {
         run_program(programName);
@@ -119,10 +119,10 @@ void debugChild(pid_t child_pid, const std::string& memStartHex, uint64_t breakA
     printInHex("Breakpoint address", stop_addr);
     uint8_t int3 = 0xCC;
     uint64_t dataToRestore = ptrace(PTRACE_PEEKDATA, child_pid, stop_addr);
-    // Change the last byte of the register to be the int 3 instruction. This will cause the program to stop
+    // Change the register to be the int 3 instruction. This will cause the program to stop
     // on the address.
     ptrace(PTRACE_POKEDATA, child_pid, stop_addr, (dataToRestore & ~0xFF) | int3);
-    // Tell child to run. It should run until it hits the breakpoint.
+    // Tell child to run. It should now run until it hits the breakpoint (int3 instruction).
     ptrace(PTRACE_CONT, child_pid, 0, 0);
     
     /* Wait for child to stop */
@@ -134,7 +134,8 @@ void debugChild(pid_t child_pid, const std::string& memStartHex, uint64_t breakA
         sleep(1);
 
         // Get the address of the next instruction. This will be the instruction after the memory address we set to
-        // int3 since RIP register is incremented after the CPU runs any instruction.
+        // int3 since instruction point register (RIP) is incremented after the CPU runs any instruction.
+        // We use 8*REG_RIP because this is a 64 bit system, so each register is of length 8 bytes. 
         uint64_t addr = ptrace(PTRACE_PEEKUSER, child_pid, 8 * REG_RIP, NULL); // PEEKUSER is for getting the register values. PEEKDATA is for reading the program data.
         printInHex("Stop address", addr);
 
