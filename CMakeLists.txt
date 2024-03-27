@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 project(Debugger)
 
 # Create executable for the debugger
-add_executable(pgdb main.cpp procMemMap.cpp)
+add_executable(pgdb main.cpp procMemMap.cpp debugger.cpp programDebugInfo.cpp)
 # Add directories to find headers and statically linked code
 target_include_directories(pgdb PRIVATE . include/libelfin)
 
