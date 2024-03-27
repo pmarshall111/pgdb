@@ -31,3 +31,9 @@ There's a macro to add the name of the process to any fprintf calls in [fprintfA
 [hello.tsk] Random number: 1804289383
 [pgdb] Stopped
 ```
+
+## Helpful sources
+
+https://blog.tartanllama.xyz/writing-a-linux-debugger-setup/
+
+This repo was made using the help of the above tutorial

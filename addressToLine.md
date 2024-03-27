@@ -1,3 +1,5 @@
+# How to interpret Dwarf debugging info
+
 ## .debug_line section
 
 `readelf --debug-dump=decodedline ~/Documents/personalProjects/debugger/build/hello.tsk `
