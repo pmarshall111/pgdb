@@ -6,22 +6,21 @@
 #include <sys/ptrace.h>
 #include <sys/wait.h>
 
-#include <boost/algorithm/string/split.hpp>
 #include <boost/algorithm/string/classification.hpp>
+#include <boost/algorithm/string/split.hpp>
 
 namespace {
-    void printInHex(const std::string& prefix, size_t addr) {
-        std::stringstream addrHex;
-        addrHex << std::hex << addr;
-        fprintf(stdout, "%s: %s.\n", prefix.c_str(), addrHex.str().c_str());
-    }
+void printInHex(const std::string &prefix, size_t addr) {
+    std::stringstream addrHex;
+    addrHex << std::hex << addr;
+    fprintf(stdout, "%s: %s.\n", prefix.c_str(), addrHex.str().c_str());
 }
+} // namespace
 
 //
 // Breakpoint
 //
-
-Breakpoint::Breakpoint(uint64_t child_pid, uint64_t stop_addr, const std::string& name): d_childPid(child_pid), d_stopAddr(stop_addr), d_name(name) {};
+Breakpoint::Breakpoint(uint64_t child_pid, uint64_t stop_addr, const std::string &name) : d_childPid(child_pid), d_stopAddr(stop_addr), d_name(name){};
 
 void Breakpoint::set() {
     printInHex("Breakpoint address", d_stopAddr);
@@ -32,21 +31,18 @@ void Breakpoint::set() {
     ptrace(PTRACE_POKEDATA, d_childPid, d_stopAddr, (d_dataToRestore & ~0xFF) | int3);
 }
 
-
 void Breakpoint::unset() {
     uint64_t currData = ptrace(PTRACE_PEEKDATA, d_childPid, d_stopAddr);
     // Set memory at stop address back to what it was before int3
-    ptrace(PTRACE_POKEDATA, d_childPid, d_stopAddr, (currData & ~0xFF)|d_dataToRestore);
+    ptrace(PTRACE_POKEDATA, d_childPid, d_stopAddr, (currData & ~0xFF) | d_dataToRestore);
 }
 
-const std::string& Breakpoint::getName() {return d_name;}
-
+const std::string &Breakpoint::getName() { return d_name; }
 
 //
 // BreakpointManager
 //
-
-BreakpointManager::BreakpointManager(ProgramDebugInfo programDebugInfo): d_programDebugInfo(programDebugInfo) {};
+BreakpointManager::BreakpointManager(ProgramDebugInfo programDebugInfo) : d_programDebugInfo(programDebugInfo){};
 
 std::optional<Breakpoint> BreakpointManager::getByAddress(uint64_t addr) {
     auto iter = d_breakpointStore.find(addr);
@@ -73,12 +69,10 @@ void BreakpointManager::createBreakpoint(std::string funcName, uint64_t childPid
     }
 }
 
-
 //
 // Debugger
 //
-
-Debugger::Debugger(uint64_t childPid, ProgramDebugInfo programDebugInfo): d_childPid(childPid), d_breakpointManager(programDebugInfo) {};
+Debugger::Debugger(uint64_t childPid, ProgramDebugInfo programDebugInfo) : d_childPid(childPid), d_breakpointManager(programDebugInfo){};
 
 void Debugger::start() {
     int waitStatus;
@@ -119,7 +113,7 @@ std::vector<std::string> Debugger::getUserInput() {
     // Get input
     std::string userInput;
     getline(std::cin, userInput);
-    
+
     // Split user input to tokens
     std::vector<std::string> tokens;
     auto pred = boost::is_any_of(" ");
@@ -145,14 +139,14 @@ void Debugger::runOriginalInstruction() {
     // Get the address the Instruction Pointer is pointing to. This is the address of the next instruction to run.
     // We do 8 * REG_RIP since this is 64 bit system. Each register is 8 bytes.
     uint64_t ripAddr = ptrace(PTRACE_PEEKUSER, d_childPid, 8 * REG_RIP, NULL); // PEEKUSER is for getting the register values. PEEKDATA is for reading the program data.
-    printInHex("Stop address", ripAddr-1);
-    std::optional<Breakpoint> breakpoint = d_breakpointManager.getByAddress(ripAddr-1); // Breakpoint will be at instruction before Instruction Pointer since IP points at the next instruction to run.
+    printInHex("Stop address", ripAddr - 1);
+    std::optional<Breakpoint> breakpoint = d_breakpointManager.getByAddress(ripAddr - 1); // Breakpoint will be at instruction before Instruction Pointer since IP points at the next instruction to run.
     if (breakpoint) {
         fprintf(stdout, "Stopped at breakpoint name '%s'\n", breakpoint->getName().c_str());
         // Restoring data and stepping 1 step.
         breakpoint->unset();
         // Move RIP register back 1 step now we've replaced the data with what was there before and run it
-        ptrace(PTRACE_POKEUSER, d_childPid, 8 * REG_RIP, ripAddr-1);
+        ptrace(PTRACE_POKEUSER, d_childPid, 8 * REG_RIP, ripAddr - 1);
         ptrace(PTRACE_SINGLESTEP, d_childPid, 0, 0);
         waitpid(d_childPid, NULL, 0);
         // Restore the breakpoint so the next time we get here we stop again

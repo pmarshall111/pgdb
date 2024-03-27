@@ -20,3 +20,7 @@ gdb:
 .PHONY: clean
 clean:
 	rm -rf build
+
+.PHONY: format
+format:
+	clang-format -i -style="{IndentWidth: 4,TabWidth: 4, ColumnLimit: 0}" $$(find src -type f -regex ".*\.\(cpp\|h\)")
