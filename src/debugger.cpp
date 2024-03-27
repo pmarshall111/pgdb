@@ -143,10 +143,11 @@ void Debugger::runOriginalInstruction() {
     std::optional<Breakpoint> breakpoint = d_breakpointManager.getByAddress(ripAddr - 1); // Breakpoint will be at instruction before Instruction Pointer since IP points at the next instruction to run.
     if (breakpoint) {
         fprintf(stdout, "Stopped at breakpoint name '%s'\n", breakpoint->getName().c_str());
-        // Restoring data and stepping 1 step.
+        // Remove breakpoint and restoring original instruction
         breakpoint->unset();
-        // Move RIP register back 1 step now we've replaced the data with what was there before and run it
+        // Move RIP register back 1 step
         ptrace(PTRACE_POKEUSER, d_childPid, 8 * REG_RIP, ripAddr - 1);
+        // Now run the original instruction
         ptrace(PTRACE_SINGLESTEP, d_childPid, 0, 0);
         waitpid(d_childPid, NULL, 0);
         // Restore the breakpoint so the next time we get here we stop again
