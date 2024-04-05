@@ -1,3 +1,4 @@
+add_subdirectory(proof)
 add_subdirectory(samples)
 
 # Create executable for the debugger
